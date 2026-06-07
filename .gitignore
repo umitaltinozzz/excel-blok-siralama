@@ -1,0 +1,20 @@
+# Excel source/output data
+*.xlsx
+*.xls
+*.xlsm
+siralanmis/
+Excel_Sirali_Ciktilar/
+
+# Python caches and test artifacts
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Local/editor files
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
