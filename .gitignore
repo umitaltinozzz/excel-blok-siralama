@@ -5,10 +5,18 @@
 siralanmis/
 Excel_Sirali_Ciktilar/
 
+# Mail folder
+mail/
+
 # Python caches and test artifacts
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# PyInstaller build files
+build/
+dist/
+*.spec
 
 # Local/editor files
 .venv/

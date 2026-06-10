@@ -78,7 +78,7 @@ def test_sort_sheet_keeps_total_rows_and_sorts_details_by_selected_column(tmp_pa
 
     wb = load_workbook(source)
     ws = wb["Rapor"]
-    changed_blocks, total_rows, detail_rows = sort_sheet(
+    changed_blocks, total_rows, detail_rows, skipped_ranges = sort_sheet(
         ws,
         SortConfig(
             sort_column=3,
@@ -189,7 +189,7 @@ def test_auto_first_row_ignores_styled_report_header(tmp_path):
     ws.cell(1, 3).value = "2026\nFiili"
     mark_total_row(ws, 1, 3)
 
-    changed_blocks, total_rows, detail_rows = sort_sheet(
+    changed_blocks, total_rows, detail_rows, skipped_ranges = sort_sheet(
         ws,
         SortConfig(
             sort_column=3,
@@ -249,3 +249,121 @@ def test_gui_module_can_be_imported():
     import excel_block_sorter_gui
 
     assert hasattr(excel_block_sorter_gui, "ExcelBlockSorterApp")
+
+
+def test_remove_blank_rows_deletes_empty_rows(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rapor"
+
+    ws.append(["Grup", "Ad", "J", "K"])
+    ws.append(["G1", "TOPLAM", 100, 7])
+    ws.append(["G1", "Dusuk", 20, 300])
+    ws.append(["", "", "", ""])  # Empty row
+    ws.append(["G1", "Yuksek", 80, 100])
+    ws.append(["", "", "", ""])  # Empty row
+
+    mark_total_row(ws, 2, 3)
+
+    changed_blocks, total_rows, detail_rows, skipped_ranges = sort_sheet(
+        ws,
+        SortConfig(
+            sort_column=3,
+            first_row=2,
+            descending=True,
+            remove_blank_rows=True,
+        )
+    )
+
+    assert ws.max_row == 4
+    assert ws.cell(3, 2).value == "Yuksek"
+    assert ws.cell(4, 2).value == "Dusuk"
+
+
+def test_merged_cell_block_is_skipped(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rapor"
+
+    # Block 1 (has merged cell in details)
+    ws.append(["G1", "TOPLAM", 100, 7]) # row 1
+    ws.append(["G1", "A", 20, 300])      # row 2
+    ws.append(["G1", "B", 80, 100])      # row 3
+    # Block 2 (clean)
+    ws.append(["G2", "TOPLAM", 50, 9])  # row 4
+    ws.append(["G2", "C", 10, 1])        # row 5
+    ws.append(["G2", "D", 40, 2])        # row 6
+
+    mark_total_row(ws, 1, 3)
+    mark_total_row(ws, 4, 3)
+
+    # Merge cells in row 2 (columns 1 and 2)
+    ws.merge_cells("A2:B2")
+
+    changed_blocks, total_rows, detail_rows, skipped_ranges = sort_sheet(
+        ws,
+        SortConfig(
+            sort_column=3,
+            first_row=1,
+            descending=True,
+        )
+    )
+
+    assert any("birlesik hucre iceriyor, bu blok atlandi" in text for text in skipped_ranges)
+    # Block 1 should not be sorted: A remains at row 2, B remains at row 3
+    assert ws.cell(2, 1).value == "G1"
+    assert ws.cell(3, 2).value == "B"
+    # Block 2 should be sorted: D (40) is sorted before C (10)
+    assert ws.cell(5, 2).value == "D"
+    assert ws.cell(6, 2).value == "C"
+
+
+def test_total_blocks_with_merged_cells_are_kept_fixed_but_others_are_sorted(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rapor"
+
+    # 3 Toplam Bloğu
+    ws.append(["G1", "TOPLAM 1", 50, 0])  # row 1 (temiz)
+    ws.append(["G1", "Detay 1", 50, 0])
+
+    ws.append(["G2", "TOPLAM 2", 100, 0]) # row 3 (birleşik hücre içerecek)
+    ws.append(["G2", "Detay 2", 100, 0])
+
+    ws.append(["G3", "TOPLAM 3", 200, 0]) # row 5 (temiz)
+    ws.append(["G3", "Detay 3", 200, 0])
+
+    mark_total_row(ws, 1, 3)
+    mark_total_row(ws, 3, 3)
+    mark_total_row(ws, 5, 3)
+
+    # G2 bloğunda (row 3 ve 4) birleşik hücre yapalım
+    ws.merge_cells("A3:B3")
+
+    changed_blocks, total_rows, detail_rows, skipped_ranges = sort_sheet(
+        ws,
+        SortConfig(
+            sort_column=3,
+            first_row=1,
+            descending=True,
+        )
+    )
+
+    # G2 bloğu yerinde sabit kalmalı çünkü birleşik hücre içeriyor.
+    # Ancak G1 ve G3 kendi aralarında yer değiştirebilmeli (200 > 50 olduğu için G3 en başa gelmeli).
+    # Normal sıralama sırası şöyle olmalı:
+    # 1. G3 bloğu (temiz, en yüksek değere sahip) -> Satır 1-2'ye taşınacak
+    # 2. G2 bloğu (sabit kalmalı, yani satır 3-4'te kalacak)
+    # 3. G1 bloğu (temiz, en düşük değere sahip) -> Satır 5-6'ya taşınacak
+
+    assert any("birlesik hucre iceriyor, bu toplam blogunun sirasi sabit tutuldu" in text for text in skipped_ranges)
+
+    # Satır 1: G3 TOPLAM 3
+    assert ws.cell(1, 2).value == "TOPLAM 3"
+    # Satır 3: G2 TOPLAM 2 (sabit kaldı) - A3 hücresi değer tutar, B3 MergedCell'dir
+    assert ws.cell(3, 1).value == "G2"
+    assert ws.cell(3, 3).value == 100
+    # Satır 5: G1 TOPLAM 1
+    assert ws.cell(5, 2).value == "TOPLAM 1"
+
+

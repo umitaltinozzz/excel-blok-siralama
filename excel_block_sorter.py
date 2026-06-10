@@ -27,6 +27,7 @@ class SortConfig:
     keep_blank_rows_at_bottom: bool = True
     sort_columns: tuple[int, ...] = ()
     sort_total_blocks: bool = True
+    remove_blank_rows: bool = False
 
     def active_sort_columns(self) -> tuple[int, ...]:
         return self.sort_columns or (self.sort_column,)
@@ -41,6 +42,7 @@ class ProcessResult:
     detail_rows: int
     skipped: bool = False
     reason: str = ""
+    skipped_ranges: tuple[str, ...] = ()
 
 
 def column_to_index(value: str) -> int:
@@ -174,11 +176,26 @@ def row_snapshot(ws: Worksheet, row_number: int, max_col: int) -> list[dict]:
     for col in range(1, max_col + 1):
         cell = ws.cell(row_number, col)
         if isinstance(cell, MergedCell):
-            raise ValueError(
-                f"{ws.title}!{get_column_letter(col)}{row_number} birlesik hucre icinde."
-            )
-        cells.append(snapshot_cell(cell))
+            cells.append(_empty_cell_snapshot())
+        else:
+            cells.append(snapshot_cell(cell))
     return cells
+
+
+def _empty_cell_snapshot() -> dict:
+    """Birlesik hucre icindeki bos hucre icin varsayilan snapshot."""
+    return {
+        "value": None,
+        "style": None,
+        "number_format": "General",
+        "font": None,
+        "fill": None,
+        "border": None,
+        "alignment": None,
+        "protection": None,
+        "comment": None,
+        "hyperlink": None,
+    }
 
 
 def rows_snapshot(ws: Worksheet, start_row: int, end_row: int, max_col: int) -> list[list[dict]]:
@@ -208,14 +225,22 @@ def snapshot_cell(cell: Cell) -> dict:
 def write_row(ws: Worksheet, row_number: int, snapshot: list[dict]) -> None:
     for col, data in enumerate(snapshot, start=1):
         cell = ws.cell(row_number, col)
+        if isinstance(cell, MergedCell):
+            continue
         cell.value = data["value"]
-        cell._style = copy(data["style"])
+        if data["style"] is not None:
+            cell._style = copy(data["style"])
         cell.number_format = data["number_format"]
-        cell.font = copy(data["font"])
-        cell.fill = copy(data["fill"])
-        cell.border = copy(data["border"])
-        cell.alignment = copy(data["alignment"])
-        cell.protection = copy(data["protection"])
+        if data["font"] is not None:
+            cell.font = copy(data["font"])
+        if data["fill"] is not None:
+            cell.fill = copy(data["fill"])
+        if data["border"] is not None:
+            cell.border = copy(data["border"])
+        if data["alignment"] is not None:
+            cell.alignment = copy(data["alignment"])
+        if data["protection"] is not None:
+            cell.protection = copy(data["protection"])
         cell.comment = copy(data["comment"])
         cell.hyperlink = copy(data["hyperlink"])
 
@@ -250,41 +275,61 @@ def sort_total_blocks(
     last_column: int,
     sort_columns: tuple[int, ...],
     descending: bool,
-) -> None:
+) -> list[str]:
+    """Toplam bloklarini degerlerine gore siralar. Birlesik hucreli bloklari yerinde sabit tutar."""
+    skipped: list[str] = []
     if len(total_rows) < 2:
-        return
+        return skipped
 
     blocks = []
     for index, total_row in enumerate(total_rows):
         end = (total_rows[index + 1] - 1) if index + 1 < len(total_rows) else ws.max_row
+        
+        has_merged = has_merged_cell_in_range(ws, total_row, end, last_column)
+        fixed = is_fixed_total_row(ws, total_row, last_column)
+        
+        if has_merged and not fixed:
+            fixed = True
+            skipped.append(
+                f"{ws.title}!A{total_row}:{get_column_letter(last_column)}{end} "
+                "birlesik hucre iceriyor, bu toplam blogunun sirasi sabit tutuldu"
+            )
+
         blocks.append(
             {
                 "start": total_row,
                 "end": end,
                 "key": total_row_key(ws, total_row, sort_columns),
-                "fixed": is_fixed_total_row(ws, total_row, last_column),
+                "fixed": fixed,
                 "rows": rows_snapshot(ws, total_row, end, last_column),
             }
         )
 
+    non_fixed_blocks = [b for b in blocks if not b["fixed"]]
+    non_fixed_sorted = sorted(non_fixed_blocks, key=lambda item: item["key"], reverse=descending)
+
     output_blocks = []
-    segment = []
+    non_fixed_iter = iter(non_fixed_sorted)
     for block in blocks:
         if block["fixed"]:
-            output_blocks.extend(sorted(segment, key=lambda item: item["key"], reverse=descending))
-            segment = []
             output_blocks.append(block)
         else:
-            segment.append(block)
-    output_blocks.extend(sorted(segment, key=lambda item: item["key"], reverse=descending))
+            output_blocks.append(next(non_fixed_iter))
 
     row_pointer = total_rows[0]
     for block in output_blocks:
         write_rows(ws, row_pointer, block["rows"])
         row_pointer += len(block["rows"])
 
+    return skipped
 
-def sort_sheet(ws: Worksheet, config: SortConfig) -> tuple[int, int, int]:
+
+def sort_sheet(ws: Worksheet, config: SortConfig) -> tuple[int, int, int, list[str]]:
+    """Sayfayi siralar. Birlesik hucreli bloklari atlar, hata fırlatmaz.
+
+    Returns:
+        (changed_blocks, total_row_count, moved_detail_rows, skipped_ranges)
+    """
     first_row = config.first_row or 1
     sort_columns = config.active_sort_columns()
     primary_sort_column = sort_columns[0]
@@ -297,6 +342,7 @@ def sort_sheet(ws: Worksheet, config: SortConfig) -> tuple[int, int, int]:
 
     changed_blocks = 0
     moved_detail_rows = 0
+    skipped_ranges: list[str] = []
 
     for index, total_row in enumerate(total_rows):
         start = total_row + 1
@@ -305,10 +351,11 @@ def sort_sheet(ws: Worksheet, config: SortConfig) -> tuple[int, int, int]:
             continue
 
         if has_merged_cell_in_range(ws, start, end, last_column):
-            raise ValueError(
+            skipped_ranges.append(
                 f"{ws.title}!A{start}:{get_column_letter(last_column)}{end} "
-                "araliginda birlesik hucre var; bu blok guvenli siralanamaz."
+                "birlesik hucre iceriyor, bu blok atlandi"
             )
+            continue
 
         numeric_rows = []
         other_rows = []
@@ -343,9 +390,42 @@ def sort_sheet(ws: Worksheet, config: SortConfig) -> tuple[int, int, int]:
         moved_detail_rows += len(ordered_rows)
 
     if config.sort_total_blocks:
-        sort_total_blocks(ws, total_rows, last_column, sort_columns, config.descending)
+        block_skipped = sort_total_blocks(
+            ws, total_rows, last_column, sort_columns, config.descending
+        )
+        skipped_ranges.extend(block_skipped)
 
-    return changed_blocks, len(total_rows), moved_detail_rows
+    if config.remove_blank_rows:
+        delete_blank_rows(ws, first_row, last_column)
+
+    return changed_blocks, len(total_rows), moved_detail_rows, skipped_ranges
+
+
+def is_row_blank(ws: Worksheet, row_number: int, max_col: int) -> bool:
+    """Satirda tum hucreler bos mu kontrol eder."""
+    for col in range(1, max_col + 1):
+        cell = ws.cell(row_number, col)
+        if isinstance(cell, MergedCell):
+            continue
+        if cell.value not in (None, ""):
+            return False
+    return True
+
+
+def delete_blank_rows(ws: Worksheet, first_row: int, max_col: int) -> int:
+    """Bos satirlari siler, asagidan yukariya dogru calisir.
+
+    Returns:
+        Silinen satir sayisi.
+    """
+    deleted = 0
+    for row in range(ws.max_row, first_row - 1, -1):
+        if has_merged_cell_in_range(ws, row, row, max_col):
+            continue
+        if is_row_blank(ws, row, max_col):
+            ws.delete_rows(row, 1)
+            deleted += 1
+    return deleted
 
 
 def collect_input_files(input_path: Path, output_dir: Path) -> list[Path]:
@@ -397,19 +477,24 @@ def process_workbook(
     changed_blocks = 0
     total_rows = 0
     detail_rows = 0
+    all_skipped: list[str] = []
 
     for ws in iter_target_sheets(wb, config.sheet_name):
-        sheet_changed, sheet_totals, sheet_details = sort_sheet(ws, config)
+        sheet_changed, sheet_totals, sheet_details, sheet_skipped = sort_sheet(ws, config)
         changed_blocks += sheet_changed
         total_rows += sheet_totals
         detail_rows += sheet_details
+        all_skipped.extend(sheet_skipped)
 
     output_path = build_output_path(input_file, input_path, output_dir, suffix, output_name)
     if not dry_run:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         wb.save(output_path)
 
-    return ProcessResult(input_file, output_path, changed_blocks, total_rows, detail_rows)
+    return ProcessResult(
+        input_file, output_path, changed_blocks, total_rows, detail_rows,
+        skipped_ranges=tuple(all_skipped),
+    )
 
 
 def process_files(
@@ -494,11 +579,14 @@ def result_line(result: ProcessResult, dry_run: bool) -> str:
         return f"SKIP {result.input_path.name}: {result.reason}"
 
     action = "kontrol edildi" if dry_run else f"yazildi -> {result.output_path}"
-    return (
+    lines = [
         f"OK {result.input_path.name}: {result.changed_blocks} blok siralandi, "
         f"{result.total_rows} toplam satiri bulundu, {result.detail_rows} detay satiri islendi, "
-        f"{action}"
-    )
+        f"{action}",
+    ]
+    for skipped in result.skipped_ranges:
+        lines.append(f"  UYARI: {skipped}")
+    return "\n".join(lines)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
