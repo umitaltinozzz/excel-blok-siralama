@@ -1,168 +1,79 @@
 # Excel Block Sorter
 
-Windows icin hazirlanmis yerel bir Excel siralama aracidir. Finans veya
-raporlama dosyalarinda toplam satirlarini ve bu toplamlarin altindaki detay
-satirlarini otomatik olarak siralar.
+**Sorts total blocks and their detail rows in Excel reports — a local Windows tool**
 
-## Ne Yapar?
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![openpyxl](https://img.shields.io/badge/openpyxl-Excel-217346?style=for-the-badge)](https://openpyxl.readthedocs.io/)
+[![PyInstaller](https://img.shields.io/badge/PyInstaller-EXE-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pyinstaller.org/)
+[![Windows](https://img.shields.io/badge/Windows-Desktop-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
+![Status](https://img.shields.io/badge/Status-Completed-blue?style=for-the-badge)
 
-Arac, Excel dosyasinda toplam satirlarini bulur ve iki seviyeli siralama yapar:
+---
 
-1. Toplam bloklarini buyukten kucuge siralar.
-2. Her toplam blogunun altindaki detay satirlarini kendi icinde buyukten kucuge
-   siralar.
+## Overview
 
-Ornek:
+A local Windows tool for finance and reporting spreadsheets. It detects total rows and the detail rows beneath them, then performs a two-level sort: total blocks from largest to smallest, and detail rows within each block from largest to smallest — without breaking the block structure.
 
-```text
-367.349.746 PERSONEL...
-117.173.808 DISARIDAN...
-60.077.177  NAKLIYE...
-124.231.547 AMORTISMAN...
+## Example
+
+```
+Input                          Output
+367.349.746 PERSONEL...        367.349.746 PERSONEL...
+117.173.808 DISARIDAN...       124.231.547 AMORTISMAN...
+ 60.077.177 NAKLIYE...         117.173.808 DISARIDAN...
+124.231.547 AMORTISMAN...       60.077.177 NAKLIYE...
 ```
 
-Cikti:
+## Project Status
 
-```text
-367.349.746 PERSONEL...
-124.231.547 AMORTISMAN...
-117.173.808 DISARIDAN...
-60.077.177  NAKLIYE...
-```
+Completed utility. A prebuilt `Excel_Blok_Siralayici.exe` is included for users without Python.
 
-`Genel Toplam` satiri varsa kategori gibi yukari tasinmaz, altta kalir.
+## Features
 
-## Ozellikler
+- Detects total rows and their detail rows automatically
+- Two-level descending sort that keeps each block intact
+- Simple GUI and a `.bat` launcher for non-technical users
+- Diff tool to compare the original and sorted workbook
+- Unit tests for the sorter and diff logic
 
-- `.xlsx` dosyalarini isler.
-- Tek dosya, coklu dosya veya klasor secilebilir.
-- Sadece secilen kolona gore siralama yapar.
-- Coklu siralama kolonu destekler: `J,K` gibi.
-- Satirin sadece siralama hucrelerini degil, tum tablo satirini birlikte tasir.
-- Orijinal Excel dosyasini degistirmez.
-- Ciktilari masaustune veya secilen klasore kaydeder.
-- Tek dosya icin yeni dosya adi verilebilir.
+## Tech Stack
 
-## Kurulum
+| Layer | Technology |
+|---|---|
+| Language | Python |
+| Excel I/O | openpyxl |
+| GUI | Tkinter |
+| Packaging | PyInstaller (Windows .exe) |
+| Testing | pytest |
 
-Python 3.10+ onerilir.
+## Getting Started
 
-Bagimliliklari yuklemek icin:
+Double-click `Excel_Blok_Siralama.bat` (or the `.exe`) and pick a workbook. From source:
 
-```powershell
+```bash
 pip install -r requirements.txt
+python excel_block_sorter_gui.py        # GUI
+python sort_excel_blocks.py input.xlsx  # CLI
+pytest
 ```
 
-Windows Python kurulumunda Tkinter genelde hazir gelir. GUI acilmazsa Python
-kurulumunda Tkinter bileseni kontrol edilmelidir.
+## Project Structure
 
-## GUI Ile Kullanma
-
-GUI'yi baslatmak icin:
-
-```powershell
-Excel_Blok_Siralama.bat
+```
+excel-blok-siralama/
+├── Excel_Blok_Siralama.bat
+├── Excel_Blok_Siralayici.exe
+├── README.md
+├── excel_block_sorter.py
+├── excel_block_sorter_gui.py
+├── excel_diff.py
+├── requirements.txt
+├── sort_excel_blocks.py
+├── test_excel_block_sorter.py
+├── test_excel_diff.py
 ```
 
-Ardindan:
+## License
 
-1. `Dosya ekle` veya `Klasor ekle` ile Excel dosyalarini secin.
-2. `Siralama kolonu` alanina kolon yazin. Ornek: `J`.
-3. Gerekirse coklu kolon yazin. Ornek: `J,K`.
-4. Cikti klasorunu secin veya `Masaustu` dugmesini kullanin.
-5. Tek dosya icin isterseniz `Yeni dosya adi` yazin.
-6. `Calistir` dugmesine basin.
-
-Varsayilan cikti klasoru:
-
-```text
-C:\Users\<kullanici>\Desktop\Excel_Sirali_Ciktilar
-```
-
-## Komut Satirindan Kullanma
-
-Tek dosya:
-
-```powershell
-python excel_block_sorter.py --input Book1.xlsx --output siralanmis --sort-column J
-```
-
-Coklu kolon:
-
-```powershell
-python excel_block_sorter.py --input Book1.xlsx --output siralanmis --sort-column J,K
-```
-
-Tek dosyada yeni ad:
-
-```powershell
-python excel_block_sorter.py --input Book1.xlsx --output siralanmis --sort-column J --output-name rapor_sirali.xlsx
-```
-
-Klasordeki tum Excel dosyalari:
-
-```powershell
-python excel_block_sorter.py --input . --output siralanmis --sort-column J
-```
-
-Sadece belirli sayfa:
-
-```powershell
-python excel_block_sorter.py --input Book1.xlsx --output siralanmis --sort-column J --sheet xxx
-```
-
-Dosya yazmadan kontrol:
-
-```powershell
-python excel_block_sorter.py --input Book1.xlsx --output siralanmis --sort-column J --dry-run
-```
-
-## Nasil Calisir?
-
-Toplam satiri su sekilde bulunur:
-
-- Secilen ana siralama kolonunda sayisal deger olmalidir.
-- Ayni satirda dolgu rengi veya cift cizgi bicimi olmalidir.
-- `2026 Fiili` gibi basliklar sayi kabul edilmez.
-
-Blok mantigi:
-
-- Her toplam satiri yeni bir blogun baslangicidir.
-- Bir sonraki toplam satirina kadar olan satirlar o blogun detayidir.
-- Bloklar toplam degerine gore siralanir.
-- Detay satirlari kendi blogu icinde siralanir.
-
-## Proje Dosyalari
-
-```text
-Excel_Blok_Siralama.bat     GUI'yi baslatir
-excel_block_sorter_gui.py   Tkinter GUI
-excel_block_sorter.py       Ana is motoru ve CLI
-sort_excel_blocks.py        Eski komut adiyla uyumlu giris noktasi
-test_excel_block_sorter.py  Testler
-requirements.txt            Python bagimliliklari
-README.md                   Proje dokumani
-```
-
-## Test
-
-Testleri calistirmak icin:
-
-```powershell
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'
-pytest -q
-```
-
-Derleme kontrolu:
-
-```powershell
-python -m py_compile excel_block_sorter.py excel_block_sorter_gui.py sort_excel_blocks.py
-```
-
-## Notlar
-
-- `.xls` dosyalari desteklenmez, `.xlsx` kullanilmalidir.
-- Orijinal Excel dosyalari degistirilmez.
-- Excel dosyasi acik veya kilitliyse cikti kaydederken hata alinabilir.
-- Siralanacak detay araliginda birlesik hucre varsa program guvenlik amaciyla
-  ilgili dosyayi atlayabilir.
+[MIT License](./LICENSE)
